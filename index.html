@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel de PIB dos municípios — DuckDB-WASM</title>
+<meta name="description" content="Painel analítico do PIB dos 5.570 municípios brasileiros (IBGE) rodando 100% no navegador com DuckDB-WASM e SQL livre.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%23f5b942%27/%3E%3Cpath d=%27M7 24V14h4v10zm7 0V8h4v16zm7 0v-7h4v7z%27 fill=%27%231a1405%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0d1117;--card:#141a23;--line:#222b38;--tx:#e8edf3;--mut:#93a0b2;--ac:#f5b942;--ac2:#4fd1c5}
+*{box-sizing:border-box}html{color-scheme:dark}
+body{margin:0;background:radial-gradient(1100px 500px at 80% -10%,#1b2a3a 0,transparent 60%),var(--bg);color:var(--tx);font:15px/1.55 Inter,system-ui,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:28px 20px 60px}
+h1{font:600 clamp(26px,4.5vw,40px)/1.1 Fraunces,serif;margin:6px 0 8px}
+.eyebrow{color:var(--ac);font:500 12px 'JetBrains Mono',monospace;letter-spacing:.12em;text-transform:uppercase}
+.lead{color:var(--mut);max-width:70ch;margin:0 0 22px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--mut)}
+select,input,textarea,button{font:inherit;color:var(--tx);background:#0f151d;border:1px solid var(--line);border-radius:9px;padding:9px 10px}
+select:focus,input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--ac2);outline-offset:1px}
+button{cursor:pointer;background:var(--ac);color:#1a1405;border:0;font-weight:600}button:hover{filter:brightness(1.08)}
+button.sec{background:#1c2633;color:var(--tx);border:1px solid var(--line)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px}
+.kpi b{display:block;font:600 26px Fraunces,serif;margin-top:2px}.kpi span{color:var(--mut);font-size:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.grid>section{min-width:0}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+h2{font-size:15px;margin:0 0 10px;font-weight:600}
+.chart{overflow-x:auto}.chart svg{max-width:100%;height:auto}
+.tw{overflow:auto;max-height:420px;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:7px 10px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line)}
+th{position:sticky;top:0;background:#1a2230;font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}.row .sp{flex:1}
+textarea{width:100%;min-height:120px;font:13px/1.5 'JetBrains Mono',monospace;resize:vertical}
+.err{color:#ff8b8b;font:13px 'JetBrains Mono',monospace;white-space:pre-wrap}
+.note{color:var(--mut);font-size:12.5px}a{color:var(--ac2)}
+#load{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:9;color:var(--mut)}
+footer{margin-top:28px}
+</style>
+</head>
+<body>
+<div id="load">Carregando DuckDB-WASM e o arquivo Parquet…</div>
+<main>
+<div class="eyebrow">DuckDB-WASM · SQL no navegador · sem servidor</div>
+<h1>PIB dos municípios brasileiros</h1>
+<p class="lead">5.570 municípios, ano de 2021. O arquivo Parquet é lido direto no seu navegador por um banco DuckDB — cada filtro abaixo é uma consulta SQL, e você pode escrever as suas na caixa no final.</p>
+
+<section class="filters panel" aria-label="Filtros">
+<label>Região<select id="fReg"></select></label>
+<label>Estado<select id="fUf"></select></label>
+<label>Município<input id="fMun" type="search" placeholder="Parte do nome…"></label>
+<label>Setor (métrica)<select id="fSet">
+<option value="pib">PIB total</option><option value="va_agro">Agropecuária</option><option value="va_industria">Indústria</option>
+<option value="va_servicos">Serviços</option><option value="va_publico">Administração pública</option></select></label>
+</section>
+
+<section class="kpis" id="kpis" aria-live="polite"></section>
+
+<div class="grid">
+<section class="panel"><h2 id="t1">Maiores municípios</h2><div class="chart" id="c1"></div></section>
+<section class="panel"><h2>Composição do valor adicionado por setor</h2><div class="chart" id="c2"></div></section>
+</div>
+
+<section class="panel" style="margin-bottom:16px">
+<h2>Tabela</h2>
+<div class="row"><span class="note" id="tinfo"></span><span class="sp"></span><button class="sec" id="csv1">Exportar CSV</button></div>
+<div class="tw"><table id="tab"></table></div>
+</section>
+
+<section class="panel">
+<h2>SQL livre</h2>
+<p class="note" style="margin-top:0">Tabela <code>municipios</code>: cod_ibge, municipio, uf, regiao, ano, populacao, pib, va_agro, va_industria, va_servicos, va_publico (valores em R$).</p>
+<textarea id="sql" spellcheck="false" aria-label="Consulta SQL">SELECT uf, count(*) AS municipios, round(sum(pib)/1e9, 1) AS pib_bilhoes,
+       round(sum(pib)/sum(populacao)) AS pib_per_capita
+FROM municipios
+GROUP BY uf ORDER BY pib_bilhoes DESC;</textarea>
+<div class="row"><button id="run">Executar (Ctrl+Enter)</button><button class="sec" id="csv2">Exportar resultado</button><span class="note" id="sinfo"></span></div>
+<div class="err" id="serr"></div>
+<div class="tw"><table id="stab"></table></div>
+</section>
+
+<footer class="note">
+<b>Fonte dos dados:</b> IBGE — <a href="https://sidra.ibge.gov.br/tabela/5938">SIDRA, tabela 5938 (Produto Interno Bruto dos Municípios, 2021)</a> e
+<a href="https://sidra.ibge.gov.br/tabela/6579">tabela 6579 (população residente estimada, 2021)</a>, via API pública. Valores originais em mil reais, convertidos para reais. Dados abertos; este projeto não é afiliado ao IBGE.
+· <a href="https://github.com/alissonlittig/duckdb-dados-publicos">Código no GitHub</a>
+</footer>
+</main>
+
+<script type="module">
+import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
+import * as Plot from "https://cdn.jsdelivr.net/npm/@observablehq/plot@0.6.16/+esm";
+
+const $ = id => document.getElementById(id);
+const bundles = duckdb.getJsDelivrBundles();
+const b = await duckdb.selectBundle(bundles);
+const wurl = URL.createObjectURL(new Blob([`importScripts("${b.mainWorker}");`], {type: "text/javascript"}));
+const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), new Worker(wurl));
+await db.instantiate(b.mainModule, b.pthreadWorker);
+URL.revokeObjectURL(wurl);
+const buf = new Uint8Array(await (await fetch("data/municipios.parquet")).arrayBuffer());
+await db.registerFileBuffer("municipios.parquet", buf);
+const conn = await db.connect();
+await conn.query("CREATE VIEW municipios AS SELECT * FROM read_parquet('municipios.parquet')");
+
+const q = async (sql) => (await conn.query(sql)).toArray().map(r => {
+  const o = r.toJSON(); for (const k in o) if (typeof o[k] === "bigint") o[k] = Number(o[k]); return o; });
+const esc = s => s.replace(/'/g, "''");
+const nf = new Intl.NumberFormat("pt-BR");
+const brl = v => v == null ? "—" : v >= 1e9 ? "R$ " + (v/1e9).toLocaleString("pt-BR",{maximumFractionDigits:1}) + " bi" : v >= 1e6 ? "R$ " + (v/1e6).toLocaleString("pt-BR",{maximumFractionDigits:1}) + " mi" : "R$ " + nf.format(Math.round(v));
+const SET = {pib:"PIB total", va_agro:"Agropecuária", va_industria:"Indústria", va_servicos:"Serviços", va_publico:"Administração pública"};
+
+const regs = await q("SELECT DISTINCT regiao r FROM municipios ORDER BY 1");
+$("fReg").innerHTML = '<option value="">Todas</option>' + regs.map(r => `<option>${r.r}</option>`).join("");
+async function fillUf() {
+  const w = $("fReg").value ? `WHERE regiao='${esc($("fReg").value)}'` : "";
+  const u = await q(`SELECT DISTINCT uf FROM municipios ${w} ORDER BY 1`);
+  $("fUf").innerHTML = '<option value="">Todos</option>' + u.map(r => `<option>${r.uf}</option>`).join("");
+}
+await fillUf();
+
+const where = () => {
+  const c = [];
+  if ($("fReg").value) c.push(`regiao='${esc($("fReg").value)}'`);
+  if ($("fUf").value) c.push(`uf='${esc($("fUf").value)}'`);
+  if ($("fMun").value.trim()) c.push(`strip_accents(lower(municipio)) LIKE '%' || strip_accents(lower('${esc($("fMun").value.trim())}')) || '%'`);
+  return c.length ? "WHERE " + c.join(" AND ") : "";
+};
+
+function tableHtml(el, rows) {
+  if (!rows.length) { el.innerHTML = "<tr><td>Nenhuma linha.</td></tr>"; return; }
+  const cols = Object.keys(rows[0]);
+  el.innerHTML = "<thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>" +
+    rows.slice(0, 500).map(r => "<tr>" + cols.map(c => typeof r[c] === "number"
+      ? `<td class="n">${nf.format(Math.round(r[c]*100)/100)}</td>` : `<td>${r[c] ?? ""}</td>`).join("") + "</tr>").join("") + "</tbody>";
+}
+function csv(rows, name) {
+  if (!rows.length) return;
+  const cols = Object.keys(rows[0]);
+  const t = [cols.join(","), ...rows.map(r => cols.map(c => `"${String(r[c] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+  const a = Object.assign(document.createElement("a"), {href: URL.createObjectURL(new Blob(["﻿" + t], {type: "text/csv"})), download: name});
+  a.click();
+}
+
+let tabRows = [], sqlRows = [];
+async function refresh() {
+  const w = where(), m = $("fSet").value;
+  const k = (await q(`SELECT count(*) n, sum(pib) pib, sum(populacao) pop, sum(${m}) m FROM municipios ${w}`))[0];
+  const kp = [["Municípios", nf.format(k.n)], ["População", nf.format(k.pop ?? 0)], [SET[m], brl(k.m)],
+    ["PIB per capita", k.pop ? "R$ " + nf.format(Math.round(k.pib / k.pop)) : "—"]];
+  $("kpis").innerHTML = kp.map(([a, v]) => `<div class="panel kpi"><span>${a}</span><b>${v}</b></div>`).join("");
+
+  const top = await q(`SELECT municipio || ' (' || uf || ')' AS nome, ${m}/1e9 AS v FROM municipios ${w} ORDER BY ${m} DESC LIMIT 10`);
+  $("t1").textContent = `Top 10 — ${SET[m]} (R$ bilhões)`;
+  $("c1").replaceChildren(Plot.plot({width: 520, marginLeft: 150, style: {background: "transparent", color: "#e8edf3", fontSize: "12px"},
+    x: {label: "R$ bi", grid: true}, y: {label: null},
+    marks: [Plot.barX(top, {x: "v", y: "nome", sort: {y: "-x"}, fill: "#f5b942", tip: true}), Plot.ruleX([0])]}));
+
+  const grp = $("fUf").value ? "municipio" : "uf";
+  const lim = $("fUf").value ? 10 : 12;
+  const comp = await q(`WITH g AS (SELECT ${grp} AS g, sum(va_agro) a, sum(va_industria) i, sum(va_servicos) s, sum(va_publico) p FROM municipios ${w} GROUP BY 1 ORDER BY a+i+s+p DESC LIMIT ${lim})
+    SELECT g, 'Agropecuária' setor, a v FROM g UNION ALL SELECT g,'Indústria',i FROM g UNION ALL SELECT g,'Serviços',s FROM g UNION ALL SELECT g,'Adm. pública',p FROM g`);
+  $("c2").replaceChildren(Plot.plot({width: 520, marginLeft: 100, style: {background: "transparent", color: "#e8edf3", fontSize: "12px"},
+    x: {label: "% do valor adicionado", tickFormat: d => Math.round(d*100), grid: true}, y: {label: null},
+    color: {legend: true, domain: ["Agropecuária", "Indústria", "Serviços", "Adm. pública"], range: ["#7bd88f", "#f5b942", "#4fd1c5", "#b79cf5"]},
+    marks: [Plot.barX(comp, {x: "v", y: "g", fill: "setor", offset: "normalize", tip: true})]}));
+
+  tabRows = await q(`SELECT municipio, uf, regiao, populacao, round(pib/1e6,1) AS pib_milhoes, round(${m}/1e6,1) AS setor_milhoes,
+    round(pib/populacao) AS pib_per_capita FROM municipios ${w} ORDER BY ${m} DESC`);
+  $("tinfo").textContent = `${nf.format(tabRows.length)} linhas` + (tabRows.length > 500 ? " (mostrando 500; o CSV leva todas)" : "") + ` · ordenado por ${SET[m]}`;
+  tableHtml($("tab"), tabRows);
+}
+async function runSql() {
+  $("serr").textContent = "";
+  const t0 = performance.now();
+  try { sqlRows = await q($("sql").value); $("sinfo").textContent = `${nf.format(sqlRows.length)} linhas · ${Math.round(performance.now() - t0)} ms`; tableHtml($("stab"), sqlRows); }
+  catch (e) { $("serr").textContent = String(e.message || e); }
+}
+$("fReg").onchange = async () => { await fillUf(); refresh(); };
+for (const id of ["fUf", "fSet"]) $(id).onchange = refresh;
+let tm; $("fMun").oninput = () => { clearTimeout(tm); tm = setTimeout(refresh, 250); };
+$("run").onclick = runSql;
+$("sql").addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") runSql(); });
+$("csv1").onclick = () => csv(tabRows, "municipios.csv");
+$("csv2").onclick = () => csv(sqlRows, "consulta.csv");
+await refresh(); await runSql();
+$("load").remove();
+window.__pronto = true;
+</script>
+</body>
+</html>

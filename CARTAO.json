@@ -1,0 +1,12 @@
+{
+  "slug": "duckdb-dados-publicos",
+  "titulo": {"pt": "PIB dos municípios com DuckDB-WASM", "en": "Municipal GDP with DuckDB-WASM"},
+  "descricao": {
+    "pt": "Painel de dados públicos do IBGE que roda inteiro no navegador: SQL sobre um arquivo Parquet, filtros por estado, cidade e setor, gráficos, exportação em CSV e uma caixa de SQL livre. Sem servidor.",
+    "en": "A dashboard of public IBGE data that runs entirely in the browser: SQL over a Parquet file, state, city and sector filters, charts, CSV export and a free-form SQL box. No server."
+  },
+  "stack": ["DuckDB-WASM", "Parquet", "Observable Plot", "JavaScript", "Python", "SQL"],
+  "demo": "https://alissonlittig.github.io/duckdb-dados-publicos/",
+  "repo": "https://github.com/alissonlittig/duckdb-dados-publicos",
+  "capa": "docs/capa-1200x750.png"
+}
